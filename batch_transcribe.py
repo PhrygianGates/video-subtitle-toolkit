@@ -285,6 +285,7 @@ def extract_and_transcribe_piped(
             whisper_cmd = [
                 whisper_bin,
                 "-m", whisper_model,
+                "-l", "auto",
                 "-",
                 "-osrt",
                 "-of", str(output_dir / segment_base)
@@ -348,6 +349,7 @@ def _extract_and_transcribe_whole(
     whisper_cmd = [
         whisper_bin,
         "-m", whisper_model,
+        "-l", "auto",
         "-",
         "-osrt",
         "-of", str(output_dir / base_name)
