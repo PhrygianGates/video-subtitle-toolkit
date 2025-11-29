@@ -449,13 +449,13 @@ def main() -> None:
         "--api-provider",
         "-p",
         choices=["nv", "azure"],
-        default="nv",
-        help="API provider to use: 'nv' (NVIDIA) or 'azure' (Azure OpenAI) (default: nv)"
+        default="azure",
+        help="API provider to use: 'nv' (NVIDIA) or 'azure' (Azure OpenAI) (default: azure)"
     )
     parser.add_argument(
         "--model",
-        default="deepseek-ai/deepseek-v3.1",
-        help="Model name to use (default: deepseek-ai/deepseek-v3.1)"
+        default="gpt-5.1-20251113",
+        help="Model name to use (default: gpt-5.1-20251113)"
     )
     parser.add_argument(
         "--batch-size",
