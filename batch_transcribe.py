@@ -38,7 +38,7 @@ VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m
 # Default paths (can be overridden with arguments)
 DEFAULT_WHISPER_BIN = os.path.expanduser("~/Development/whisper.cpp/build/bin/whisper-cli")
 DEFAULT_WHISPER_MODEL = os.path.expanduser("~/Development/whisper.cpp/models/ggml-large-v2.bin")
-DEFAULT_VAD_MODEL = os.path.expanduser("~/Development/whisper.cpp/models/ggml-silero-v5.1.2.bin")
+DEFAULT_VAD_MODEL = os.path.expanduser("~/Development/whisper.cpp/models/ggml-silero-v6.2.0.bin")
 
 # Default processing settings
 DEFAULT_SEGMENT_DURATION = 16  # minutes
@@ -195,6 +195,7 @@ def extract_and_transcribe_piped(
     whisper_model: str,
     vad_model: Optional[str] = None,
     segment_duration: Optional[int] = None,
+    language: str = "auto",
     thread_safe: bool = False
 ) -> bool:
     """
@@ -219,7 +220,7 @@ def extract_and_transcribe_piped(
     # If no segmentation or video is short, process normally
     if segment_duration is None:
         return _extract_and_transcribe_whole(
-            video_path, whisper_bin, whisper_model, vad_model, thread_safe
+            video_path, whisper_bin, whisper_model, vad_model, language, thread_safe
         )
     
     # Get video duration
@@ -227,7 +228,7 @@ def extract_and_transcribe_piped(
     if duration is None:
         print_fn(f"  ⚠ Could not determine video duration, processing as whole file")
         return _extract_and_transcribe_whole(
-            video_path, whisper_bin, whisper_model, vad_model, thread_safe
+            video_path, whisper_bin, whisper_model, vad_model, language, thread_safe
         )
     
     segment_seconds = segment_duration * 60
@@ -236,7 +237,7 @@ def extract_and_transcribe_piped(
     if duration <= segment_seconds:
         print_fn(f"  ℹ Video duration ({duration/60:.1f}min) ≤ segment size ({segment_duration}min), processing as whole")
         return _extract_and_transcribe_whole(
-            video_path, whisper_bin, whisper_model, vad_model, thread_safe
+            video_path, whisper_bin, whisper_model, vad_model, language, thread_safe
         )
     
     # Process in segments
@@ -285,7 +286,7 @@ def extract_and_transcribe_piped(
             whisper_cmd = [
                 whisper_bin,
                 "-m", whisper_model,
-                "-l", "auto",
+                "-l", language,
                 "-",
                 "-osrt",
                 "-of", str(output_dir / segment_base)
@@ -327,6 +328,7 @@ def _extract_and_transcribe_whole(
     whisper_bin: str,
     whisper_model: str,
     vad_model: Optional[str] = None,
+    language: str = "auto",
     thread_safe: bool = False
 ) -> bool:
     """Process entire video as one unit."""
@@ -349,7 +351,7 @@ def _extract_and_transcribe_whole(
     whisper_cmd = [
         whisper_bin,
         "-m", whisper_model,
-        "-l", "auto",
+        "-l", language,
         "-",
         "-osrt",
         "-of", str(output_dir / base_name)
@@ -479,6 +481,7 @@ def process_video(
     translate_script: Path,
     vad_model: Optional[str] = None,
     segment_duration: Optional[int] = None,
+    language: str = "auto",
     skip_existing: bool = True,
     thread_safe: bool = False
 ) -> Tuple[str, str]:
@@ -520,7 +523,7 @@ def process_video(
     else:
         # Step 1 & 2: Extract audio and transcribe (piped, no temp file)
         if not extract_and_transcribe_piped(
-            video_path, whisper_bin, whisper_model, vad_model, segment_duration, thread_safe
+            video_path, whisper_bin, whisper_model, vad_model, segment_duration, language, thread_safe
         ):
             return ('failed', video_path.name)
     
@@ -559,6 +562,13 @@ Examples:
   
   # High concurrency: 6 workers total, 2 can transcribe simultaneously
   python batch_transcribe.py "My Videos" --target en --max-workers 6 --max-transcribe 2
+  
+  # Disable VAD even if VAD model exists
+  python batch_transcribe.py "Videos" --target zh --no-vad
+  
+  # Specify input language (default: auto)
+  python batch_transcribe.py "Videos" --target zh --language en
+  python batch_transcribe.py "Videos" --target zh -l fr
   
   # Sequential processing (single worker)
   python batch_transcribe.py "Videos" --target zh --max-workers 1
@@ -644,6 +654,22 @@ Examples:
              "Set to 0 to disable segmentation and process videos as whole."
     )
     
+    parser.add_argument(
+        "--no-vad",
+        action="store_true",
+        default=False,
+        help="Disable Voice Activity Detection even if VAD model is available"
+    )
+    
+    parser.add_argument(
+        "--language",
+        "-l",
+        type=str,
+        default="auto",
+        help="Input language for whisper transcription (default: auto). "
+             "Use language codes like: en, zh, ja, fr, de, etc."
+    )
+    
     args = parser.parse_args()
     
     # Validate directory
@@ -682,9 +708,12 @@ Examples:
         print("Please specify the path using --whisper-model", file=sys.stderr)
         sys.exit(1)
     
-    # Check VAD model (use if exists, warn if not)
+    # Check VAD model (use if exists and not disabled by user)
     vad_model_path = Path(DEFAULT_VAD_MODEL).expanduser()
-    if vad_model_path.exists():
+    if args.no_vad:
+        vad_model = None
+        print(f"VAD: Disabled by user (--no-vad)")
+    elif vad_model_path.exists():
         vad_model = str(vad_model_path)
     else:
         vad_model = None
@@ -725,11 +754,14 @@ Examples:
         print(f"Matched files:")
         for vf in video_files:
             print(f"  - {vf.name}")
+    print(f"Input language: {args.language}")
     print(f"Target language: {args.target}")
     print(f"Whisper binary: {whisper_bin}")
     print(f"Whisper model: {whisper_model}")
     if vad_model:
         print(f"VAD model: {vad_model} (voice activity detection enabled)")
+    elif args.no_vad:
+        print(f"VAD: Disabled by user (--no-vad)")
     else:
         print(f"VAD: Disabled (model not found)")
     print(f"Translation script: {translate_script}")
@@ -770,6 +802,7 @@ Examples:
                     translate_script,
                     vad_model,
                     segment_duration,
+                    args.language,
                     args.skip_existing,
                     True  # thread_safe=True for parallel processing
                 ): (i, video_path)
@@ -804,6 +837,7 @@ Examples:
                 translate_script,
                 vad_model,
                 segment_duration,
+                args.language,
                 args.skip_existing,
                 False  # thread_safe=False for sequential processing
             )
