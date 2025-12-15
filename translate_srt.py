@@ -7,7 +7,7 @@ timestamps, and structure.
 
 Environment variables required:
 - NV_API_KEY (for NVIDIA API, default provider)
-- AZURE_OPENAI_API_KEY (for Azure OpenAI, when using --api-provider azure)
+- AZURE_OPENAI_API_KEY (for Azure OpenAI or Google Gemini, when using --api-provider azure or google)
 
 Usage:
   # Using NVIDIA API (default)
@@ -15,6 +15,9 @@ Usage:
   
   # Using Azure OpenAI
   python translate_srt.py input.srt --target zh --api-provider azure
+  
+  # Using Google Gemini
+  python translate_srt.py input.srt --target zh --api-provider google
   
   # Specify output file
   python translate_srt.py input.srt --target en --output output.srt
@@ -81,8 +84,25 @@ def get_openai_client(api_provider: str = "nv"):
             api_version=api_version
         )
     
+    elif api_provider == "google":
+        # Google Gemini configuration (via Azure-compatible proxy)
+        endpoint = "https://llm-proxy.perflab.nvidia.com"
+        api_key = os.environ.get("AZURE_OPENAI_API_KEY")
+        api_version = "2025-02-01-preview"
+        
+        if not api_key:
+            raise RuntimeError(
+                "AZURE_OPENAI_API_KEY must be set as environment variable when using --api-provider google."
+            )
+        
+        return AzureOpenAI(
+            azure_endpoint=endpoint,
+            api_key=api_key,
+            api_version=api_version
+        )
+    
     else:
-        raise ValueError(f"Unknown API provider: {api_provider}. Must be 'azure' or 'nv'.")
+        raise ValueError(f"Unknown API provider: {api_provider}. Must be 'azure', 'nv', or 'google'.")
 
 
 def chat_complete(client, model: str, system_prompt: str, user_content: str) -> str:
@@ -448,14 +468,14 @@ def main() -> None:
     parser.add_argument(
         "--api-provider",
         "-p",
-        choices=["nv", "azure"],
-        default="azure",
-        help="API provider to use: 'nv' (NVIDIA) or 'azure' (Azure OpenAI) (default: azure)"
+        choices=["nv", "azure", "google"],
+        default="google",
+        help="API provider to use: 'nv' (NVIDIA), 'azure' (Azure OpenAI), or 'google' (Google Gemini) (default: google)"
     )
     parser.add_argument(
         "--model",
-        default="gpt-5.1-20251113",
-        help="Model name to use (default: gpt-5.1-20251113)"
+        default="gemini-2.5-pro",
+        help="Model name to use (default: gemini-2.5-pro)"
     )
     parser.add_argument(
         "--batch-size",
