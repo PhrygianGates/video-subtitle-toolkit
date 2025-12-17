@@ -105,17 +105,34 @@ def get_openai_client(api_provider: str = "nv"):
         raise ValueError(f"Unknown API provider: {api_provider}. Must be 'azure', 'nv', or 'google'.")
 
 
-def chat_complete(client, model: str, system_prompt: str, user_content: str) -> str:
-    """Call OpenAI Chat Completions API and return the text."""
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[
+def chat_complete(client, model: str, system_prompt: str, user_content: str, json_mode: bool = False) -> str:
+    """Call OpenAI Chat Completions API and return the text.
+    
+    Args:
+        client: OpenAI client instance
+        model: Model name
+        system_prompt: System prompt
+        user_content: User message content
+        json_mode: If True, force JSON output format
+    
+    Returns:
+        Response text
+    """
+    kwargs = {
+        "model": model,
+        "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ],
-        temperature=0.1,
-        top_p=1.0,
-    )
+        "temperature": 0.1,
+        "top_p": 1.0,
+    }
+    
+    # Force JSON output format when requested
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
+    
+    resp = client.chat.completions.create(**kwargs)
     text = resp.choices[0].message.content or ""
     return text.strip()
 
@@ -258,32 +275,21 @@ def translate_subtitle_batch(
     # Add a reminder at the end
     user_content += f'\n\n[REMINDER: Count carefully! Output a JSON array with exactly {translate_count} objects. Format: [{{"id": 1, "text": "translation1"}}, {{"id": 2, "text": "translation2"}}, ...]]'
     
-    # Get translation
-    translated = chat_complete(client, model, system_prompt, user_content)
+    # Get translation with forced JSON mode
+    translated = chat_complete(client, model, system_prompt, user_content, json_mode=True)
     
-    # Try to parse as JSON first
+    # Parse JSON response (JSON mode guarantees valid JSON output)
     translated_blocks = []
     try:
-        # Remove markdown code blocks if present
-        json_text = translated.strip()
-        if json_text.startswith("```json"):
-            json_text = json_text[7:]
-        if json_text.startswith("```"):
-            json_text = json_text[3:]
-        if json_text.endswith("```"):
-            json_text = json_text[:-3]
-        json_text = json_text.strip()
-        
-        # Parse JSON
-        json_data = json.loads(json_text)
+        json_data = json.loads(translated.strip())
         
         # Ensure it's a list
         if not isinstance(json_data, list):
             raise ValueError("JSON output is not an array")
         
-        # Check if it's the new format with id/text objects
+        # Check if it's the expected format with id/text objects
         if json_data and isinstance(json_data[0], dict) and 'id' in json_data[0] and 'text' in json_data[0]:
-            # New format: array of {"id": N, "text": "translation"} objects
+            # Format: array of {"id": N, "text": "translation"} objects
             # Sort by id to ensure correct order
             json_data.sort(key=lambda x: x.get('id', 0))
             
@@ -296,23 +302,17 @@ def translate_subtitle_batch(
             
             # Extract text fields
             translated_blocks = [str(item.get('text', '')) for item in json_data]
-            print(f"  ✓ Successfully parsed JSON with {len(translated_blocks)} numbered translations", end=' ')
+            print(f"  ✓ Parsed {len(translated_blocks)} translations", end=' ')
         else:
-            # Old format: simple string array
+            # Fallback: simple string array format
             translated_blocks = [str(item) for item in json_data]
-            print(f"  ✓ Successfully parsed JSON with {len(translated_blocks)} translations", end=' ')
+            print(f"  ✓ Parsed {len(translated_blocks)} translations (simple array)", end=' ')
         
     except (json.JSONDecodeError, ValueError) as e:
         print(f"  ✗ JSON parsing failed: {e}")
-        print(f"  → Falling back to text splitting...")
-        
-        # Fallback: Try to split the translation into individual blocks
-        # First try double newlines, then single newlines
-        translated_blocks = [t.strip() for t in translated.split("\n\n") if t.strip()]
-        
-        # If double newline split doesn't give us the right count, try single newline
-        if len(translated_blocks) != len(blocks):
-            translated_blocks = [t.strip() for t in translated.split("\n") if t.strip()]
+        print(f"  → Keeping original content for this batch")
+        # Keep original content on JSON parsing failure
+        translated_blocks = [block.content for block in blocks]
     
     # Handle mismatch between expected and actual number of translations
     if len(translated_blocks) != len(blocks):
