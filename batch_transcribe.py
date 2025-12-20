@@ -440,6 +440,7 @@ def translate_srt(
     srt_path: Path,
     target_lang: str,
     translate_script: Path,
+    batch_size: int = 10,
     thread_safe: bool = False
 ) -> bool:
     """Translate SRT file using translate_srt.py."""
@@ -450,7 +451,8 @@ def translate_srt(
         sys.executable,  # Use the same Python interpreter
         str(translate_script),
         str(srt_path),
-        "--target", target_lang
+        "--target", target_lang,
+        "--batch-size", str(batch_size)
     ]
     
     try:
@@ -483,6 +485,7 @@ def process_video(
     segment_duration: Optional[int] = None,
     language: str = "auto",
     skip_existing: bool = True,
+    translate_batch_size: int = 10,
     thread_safe: bool = False
 ) -> Tuple[str, str]:
     """
@@ -497,6 +500,7 @@ def process_video(
         vad_model: Optional path to VAD model for voice activity detection
         segment_duration: If set, split video into segments of this many minutes
         skip_existing: Skip if translated file already exists
+        translate_batch_size: Number of subtitle blocks per translation batch
         thread_safe: Use thread-safe printing
     
     Returns:
@@ -528,7 +532,7 @@ def process_video(
             return ('failed', video_path.name)
     
     # Step 3: Translate subtitles
-    if not translate_srt(srt_path, target_lang, translate_script, thread_safe):
+    if not translate_srt(srt_path, target_lang, translate_script, translate_batch_size, thread_safe):
         return ('failed', video_path.name)
     
     print_fn(f"  ✅ Successfully processed: {video_path.name}")
@@ -569,6 +573,10 @@ Examples:
   # Specify input language (default: auto)
   python batch_transcribe.py "Videos" --target zh --language en
   python batch_transcribe.py "Videos" --target zh -l fr
+  
+  # Adjust translation batch size (more blocks per API call = faster but may reduce quality)
+  python batch_transcribe.py "Videos" --target zh --translate-batch-size 20
+  python batch_transcribe.py "Videos" --target zh -tb 5  # smaller batches for better quality
   
   # Sequential processing (single worker)
   python batch_transcribe.py "Videos" --target zh --max-workers 1
@@ -668,6 +676,15 @@ Examples:
         default="auto",
         help="Input language for whisper transcription (default: auto). "
              "Use language codes like: en, zh, ja, fr, de, etc."
+    )
+    
+    parser.add_argument(
+        "--translate-batch-size",
+        "-tb",
+        type=int,
+        default=10,
+        help="Number of subtitle blocks to translate per API call (default: 10). "
+             "Larger batches are faster but may reduce translation quality."
     )
     
     args = parser.parse_args()
@@ -773,6 +790,7 @@ Examples:
     print(f"Skip existing: {'Yes' if args.skip_existing else 'No'}")
     print(f"Max parallel workers: {args.max_workers}")
     print(f"Max concurrent transcriptions: {args.max_transcribe}")
+    print(f"Translation batch size: {args.translate_batch_size} blocks per API call")
     print(f"{'='*80}")
     
     # Initialize transcription semaphore for limiting concurrent transcriptions
@@ -804,6 +822,7 @@ Examples:
                     segment_duration,
                     args.language,
                     args.skip_existing,
+                    args.translate_batch_size,
                     True  # thread_safe=True for parallel processing
                 ): (i, video_path)
                 for i, video_path in enumerate(video_files, 1)
@@ -839,6 +858,7 @@ Examples:
                 segment_duration,
                 args.language,
                 args.skip_existing,
+                args.translate_batch_size,
                 False  # thread_safe=False for sequential processing
             )
             
